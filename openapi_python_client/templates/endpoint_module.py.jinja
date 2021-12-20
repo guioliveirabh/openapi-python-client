@@ -10,7 +10,7 @@ from ...types import Response, UNSET
 {% endfor %}
 
 {% from "endpoint_macros.py.jinja" import header_params, cookie_params, query_params, json_body, multipart_body,
-    arguments, client, kwargs, parse_response, docstring %}
+    arguments, client, kwargs, parse_response, docstring, response_content %}
 
 {% set return_string = endpoint.response_type() %}
 {% set parsed_responses = (endpoint.responses | length > 0) and return_string != "Any" %}
@@ -59,15 +59,17 @@ def _get_kwargs(
 
 {% if parsed_responses %}
 def _parse_response(*, response: httpx.Response) -> Optional[{{ return_string }}]:
-    {% for response in endpoint.responses %}
+    {% for response in endpoint.responses if response.status_code is integer %}
     if response.status_code == {{ response.status_code }}:
-        {% import "property_templates/" + response.prop.template as prop_template %}
-        {% if prop_template.construct %}
-        {{ prop_template.construct(response.prop, response.source) | indent(8) }}
-        {% else %}
-        {{ response.prop.python_name }} = cast({{ response.prop.get_type_string() }}, {{ response.source }})
-        {% endif %}
-        return {{ response.prop.python_name }}
+{{ response_content(response) }}
+    {% endfor %}
+    {% for response in endpoint.responses if response.status_code == 'default' %}
+    {% if endpoint.responses | length == 1 %}
+    if True:
+    {% else %}
+    else:
+    {% endif %}
+{{ response_content(response) }}
     {% endfor %}
     return None
 {% endif %}

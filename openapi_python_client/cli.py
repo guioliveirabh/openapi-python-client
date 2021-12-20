@@ -1,7 +1,7 @@
 import codecs
 import pathlib
 from pprint import pformat
-from typing import Optional, Sequence
+from typing import Optional, Sequence, List
 
 import typer
 
@@ -160,6 +160,13 @@ def update(
     file_encoding: str = typer.Option("utf-8", help="Encoding used when writing generated"),
     config_path: Optional[pathlib.Path] = CONFIG_OPTION,
     fail_on_warning: bool = False,
+    keep_path: Optional[List[pathlib.Path]] = typer.Option(
+        None,
+        file_okay=True,
+        dir_okay=True,
+        resolve_path=True,
+        help="Paths to keep while updating"
+    ),
 ) -> None:
     """Update an existing OpenAPI Client library
 
@@ -189,5 +196,6 @@ def update(
         custom_template_path=custom_template_path,
         file_encoding=file_encoding,
         config=config,
+        keep_paths_list=keep_path,
     )
     handle_errors(errors, fail_on_warning)

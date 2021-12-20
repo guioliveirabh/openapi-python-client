@@ -17,10 +17,14 @@ python = "^3.7"
 httpx = ">=0.15.4,<0.23.0"
 attrs = ">=21.3.0"
 python-dateutil = "^2.8.0"
+click = "^8.0.3"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+{{ package_name }} = '{{ package_name }}.cli_main:cli'
 
 {% endif %}
 [tool.black]

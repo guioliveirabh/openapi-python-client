@@ -20,6 +20,7 @@ from openapi_python_client import utils
 from .config import Config
 from .parser import GeneratorData, import_string_from_class
 from .parser.errors import ErrorLevel, GeneratorError
+from .parser.openapi import Endpoint
 
 if sys.version_info.minor < 8:  # version did not exist before 3.8, need to use a backport
     from importlib_metadata import version
@@ -35,6 +36,32 @@ class MetaType(str, Enum):
     NONE = "none"
     POETRY = "poetry"
     SETUP = "setup"
+
+
+class Node(dict):
+    # TODO: improve this class and root node
+    ROOT_NODE = 'cli_auto_gen'
+
+    def __init__(self, name: str = '', parent: "Node" = None):
+        super().__init__()
+        self.name = name
+        self.parent = parent
+        self.endpoints: Dict[str, Endpoint] = {}
+
+    def is_root(self) -> bool:
+        return self.parent is None and self.name == self.ROOT_NODE
+
+    @classmethod
+    def get_method_name(cls, endpoint: Endpoint) -> str:
+        if 'list' in endpoint.name.split('.')[-1]:
+            return 'get_list'
+
+        return {
+            'delete': 'remove',
+            'get': 'get',
+            'patch': 'update',
+            'post': 'create',
+        }[endpoint.method]
 
 
 TEMPLATE_FILTERS = {
@@ -56,11 +83,13 @@ class Project:  # pylint: disable=too-many-instance-attributes
         config: Config,
         custom_template_path: Optional[Path] = None,
         file_encoding: str = "utf-8",
+        keep_paths_list: Optional[List[Path]] = None,
     ) -> None:
         self.openapi: GeneratorData = openapi
         self.meta: MetaType = meta
         self.file_encoding = file_encoding
         self.config = config
+        self.keep_paths_list = keep_paths_list
 
         package_loader = PackageLoader(__package__)
         loader: BaseLoader
@@ -118,6 +147,7 @@ class Project:  # pylint: disable=too-many-instance-attributes
         self._build_metadata()
         self._build_models()
         self._build_api()
+        self._build_cli()
         self._run_post_hooks()
         return self._get_errors()
 
@@ -127,10 +157,19 @@ class Project:  # pylint: disable=too-many-instance-attributes
         if not self.package_dir.is_dir():
             return [GeneratorError(detail=f"Directory {self.package_dir} not found")]
         print(f"Updating {self.package_name}")
-        shutil.rmtree(self.package_dir)
+        if self.keep_paths_list:
+            # TODO: assemble find command to keep some paths
+            print(self.package_dir, self.keep_paths_list)
+            shutil.rmtree(self.package_dir)
+        else:
+            shutil.rmtree(self.package_dir)
         self._create_package()
+        if self.keep_paths_list:
+            # TODO: remove
+            self._build_metadata()
         self._build_models()
         self._build_api()
+        self._build_cli()
         self._run_post_hooks()
         return self._get_errors()
 
@@ -170,12 +209,13 @@ class Project:  # pylint: disable=too-many-instance-attributes
         return errors
 
     def _create_package(self) -> None:
-        self.package_dir.mkdir()
+        self.package_dir.mkdir(exist_ok=True)
         # Package __init__.py
         package_init = self.package_dir / "__init__.py"
 
         package_init_template = self.env.get_template("package_init.py.jinja")
-        package_init.write_text(package_init_template.render(), encoding=self.file_encoding)
+        package_init.write_text(package_init_template.render(root_node_name=Node.ROOT_NODE),
+                                encoding=self.file_encoding)
 
         if self.meta != MetaType.NONE:
             pytyped = self.package_dir / "py.typed"
@@ -284,13 +324,53 @@ class Project:  # pylint: disable=too-many-instance-attributes
             )
 
             for endpoint in collection.endpoints:
-                module_path = tag_dir / f"{utils.PythonIdentifier(endpoint.name, self.config.field_prefix)}.py"
-                module_path.write_text(
-                    endpoint_template.render(
-                        endpoint=endpoint,
-                    ),
-                    encoding=self.file_encoding,
-                )
+                module_path = tag_dir / f"{endpoint.file_name}.py"
+                module_path.write_text(endpoint_template.render(endpoint=endpoint), encoding=self.file_encoding)
+
+    def _build_cli(self) -> None:
+        # Generate Command Line Interface
+
+        def _create_files(node: Node, base_path: Path, level=0):
+            # print((' ' * level) + node.name, node.endpoints.keys())
+            base_path = base_path / node.name
+            base_path.mkdir(parents=True, exist_ok=True)
+            node_path = base_path / '__init__.py'
+            node_template = self.env.get_template("endpoint_cli.py.jinja")
+            node_path.write_text(node_template.render(node=node), encoding=self.file_encoding)
+
+            for endpoint_name in sorted(node.keys()):
+                _create_files(node[endpoint_name], base_path, level + 1)
+
+        endpoint_collections_by_tag = self.openapi.endpoint_collections_by_tag
+
+        # Assemble tree
+        root = Node(Node.ROOT_NODE)
+        for collection in endpoint_collections_by_tag.values():
+            for endpoint in collection.endpoints:
+                print(endpoint.tag, endpoint.path, endpoint.method)
+                # if endpoint.path.startswith('/policies'):
+                #     print(endpoint)
+                #     print()
+
+                parent = root
+                split_path = [part for part in endpoint.path.strip('/').split('/')
+                              if not part.startswith('{')]  # TODO: think of a better filter
+                for part in split_path:
+                    parent = parent.setdefault(part, Node(part, parent))
+                name = Node.get_method_name(endpoint)
+                if name in parent.endpoints:
+                    raise RuntimeError(f"Duplicated: {name}, {endpoint.name}")
+                parent.endpoints[name] = endpoint
+
+        _create_files(node=root, base_path=self.package_dir)
+
+        cli_main_path = self.package_dir / "cli_main.py"
+        cli_main_template = self.env.get_template("cli_main.py.jinja")
+        cli_main_path.write_text(cli_main_template.render(), encoding=self.file_encoding)
+
+        cli_api_req_path = self.package_dir / "api_request.py"
+        cli_api_req_template = self.env.get_template("api_request.py.jinja")
+        cli_api_req_path.write_text(cli_api_req_template.render(), encoding=self.file_encoding)
 
 
 def _get_project_for_url_or_path(  # pylint: disable=too-many-arguments
@@ -300,6 +380,7 @@ def _get_project_for_url_or_path(  # pylint: disable=too-many-arguments
     config: Config,
     custom_template_path: Optional[Path] = None,
     file_encoding: str = "utf-8",
+    keep_paths_list: Optional[List[Path]] = None,
 ) -> Union[Project, GeneratorError]:
     data_dict = _get_document(url=url, path=path)
     if isinstance(data_dict, GeneratorError):
@@ -313,6 +394,7 @@ def _get_project_for_url_or_path(  # pylint: disable=too-many-arguments
         meta=meta,
         file_encoding=file_encoding,
         config=config,
+        keep_paths_list=keep_paths_list,
     )
 
 
@@ -352,6 +434,7 @@ def update_existing_client(
     config: Config,
     custom_template_path: Optional[Path] = None,
     file_encoding: str = "utf-8",
+    keep_paths_list: Optional[List[Path]] = None,
 ) -> Sequence[GeneratorError]:
     """
     Update an existing client library
@@ -366,6 +449,7 @@ def update_existing_client(
         meta=meta,
         file_encoding=file_encoding,
         config=config,
+        keep_paths_list=keep_paths_list,
     )
     if isinstance(project, GeneratorError):
         return [project]

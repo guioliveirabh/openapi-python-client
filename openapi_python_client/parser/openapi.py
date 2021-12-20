@@ -13,7 +13,7 @@ from ..config import Config
 from ..utils import PythonIdentifier
 from .errors import GeneratorError, ParseError, PropertyError
 from .properties import Class, EnumProperty, ModelProperty, Property, Schemas, build_schemas, property_from_data
-from .responses import Response, response_from_data
+from .responses import Response, response_from_data, StatusCode
 
 _PATH_PARAM_REGEX = re.compile("{([a-zA-Z_][a-zA-Z0-9_]*)}")
 
@@ -94,6 +94,7 @@ class Endpoint:
     name: str
     requires_security: bool
     tag: str
+    file_name: str
     summary: Optional[str] = ""
     relative_imports: Set[str] = field(default_factory=set)
     query_parameters: Dict[str, Property] = field(default_factory=dict)
@@ -213,9 +214,12 @@ class Endpoint:
         endpoint = deepcopy(endpoint)
         for code, response_data in data.items():
 
-            status_code: int
+            status_code: StatusCode
             try:
-                status_code = int(code)
+                if code != 'default':
+                    status_code = int(code)
+                else:
+                    status_code = code
             except ValueError:
                 endpoint.errors.append(
                     ParseError(
@@ -399,6 +403,7 @@ class Endpoint:
             name=name,
             requires_security=bool(data.security),
             tag=tag,
+            file_name=utils.PythonIdentifier(name, config.field_prefix),
         )
 
         result, schemas = Endpoint.add_parameters(endpoint=endpoint, data=data, schemas=schemas, config=config)

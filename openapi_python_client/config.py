@@ -28,7 +28,7 @@ class Config(BaseModel):
     package_name_override: Optional[str]
     package_version_override: Optional[str]
     post_hooks: List[str] = [
-        "autoflake -i -r --remove-all-unused-imports --remove-unused-variables --ignore-init-module-imports .",
+        "autoflake -i -r --remove-all-unused-imports --remove-unused-variables --exclude '*/rhub_cli/models/__init__.py,*/rhub_cli/cli_auto_gen/__init__.py,*/rhub_cli/__init__.py' .",
         "isort .",
         "black .",
     ]

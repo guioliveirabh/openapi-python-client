@@ -163,3 +163,14 @@ Returns:
     Response[{{ return_string }}]
 """
 {% endmacro %}
+
+
+{% macro response_content(response) %}
+        {% import "property_templates/" + response.prop.template as prop_template %}
+        {% if prop_template.construct %}
+        {{ prop_template.construct(response.prop, response.source) | indent(8) }}
+        {% else %}
+        {{ response.prop.python_name }} = cast({{ response.prop.get_type_string() }}, {{ response.source }})
+        {% endif %}
+        return {{ response.prop.python_name }}
+{% endmacro %}
