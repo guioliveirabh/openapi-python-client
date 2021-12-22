@@ -19,6 +19,7 @@ from openapi_python_client import utils
 
 from .config import Config
 from .parser import GeneratorData, import_string_from_class
+from .parser.cli_node import Node
 from .parser.errors import ErrorLevel, GeneratorError
 from .parser.openapi import Endpoint
 
@@ -36,32 +37,6 @@ class MetaType(str, Enum):
     NONE = "none"
     POETRY = "poetry"
     SETUP = "setup"
-
-
-class Node(dict):
-    # TODO: improve this class and root node
-    ROOT_NODE = 'cli_auto_gen'
-
-    def __init__(self, name: str = '', parent: "Node" = None):
-        super().__init__()
-        self.name = name
-        self.parent = parent
-        self.endpoints: Dict[str, Endpoint] = {}
-
-    def is_root(self) -> bool:
-        return self.parent is None and self.name == self.ROOT_NODE
-
-    @classmethod
-    def get_method_name(cls, endpoint: Endpoint) -> str:
-        if 'list' in endpoint.name.split('.')[-1]:
-            return 'get_list'
-
-        return {
-            'delete': 'remove',
-            'get': 'get',
-            'patch': 'update',
-            'post': 'create',
-        }[endpoint.method]
 
 
 TEMPLATE_FILTERS = {
@@ -329,6 +304,7 @@ class Project:  # pylint: disable=too-many-instance-attributes
 
     def _build_cli(self) -> None:
         # Generate Command Line Interface
+        Node.PACKAGE_NAME = self.package_name
 
         def _create_files(node: Node, base_path: Path, level=0):
             # print((' ' * level) + node.name, node.endpoints.keys())
@@ -344,23 +320,10 @@ class Project:  # pylint: disable=too-many-instance-attributes
         endpoint_collections_by_tag = self.openapi.endpoint_collections_by_tag
 
         # Assemble tree
-        root = Node(Node.ROOT_NODE)
+        root = Node.get_root()
         for collection in endpoint_collections_by_tag.values():
             for endpoint in collection.endpoints:
-                print(endpoint.tag, endpoint.path, endpoint.method)
-                # if endpoint.path.startswith('/policies'):
-                #     print(endpoint)
-                #     print()
-
-                parent = root
-                split_path = [part for part in endpoint.path.strip('/').split('/')
-                              if not part.startswith('{')]  # TODO: think of a better filter
-                for part in split_path:
-                    parent = parent.setdefault(part, Node(part, parent))
-                name = Node.get_method_name(endpoint)
-                if name in parent.endpoints:
-                    raise RuntimeError(f"Duplicated: {name}, {endpoint.name}")
-                parent.endpoints[name] = endpoint
+                root.add_endpoint(endpoint)
 
         _create_files(node=root, base_path=self.package_dir)
 

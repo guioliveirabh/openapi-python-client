@@ -43,9 +43,8 @@ class APIRequest:
 
     @classmethod
     def handle_response(cls, response: Response):
-        if response.status_code == 200:
-            if response.parsed:
-                click.echo(response.parsed)
+        if response.status_code == 200 and response.parsed:
+            click.echo(response.parsed)
         else:
             click.echo(response)
 

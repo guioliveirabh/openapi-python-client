@@ -5,6 +5,7 @@ from .api_request import APIRequest
 CONTEXT_SETTINGS = dict(
     help_option_names=['-h', '--help'],
     show_default=True,
+    max_content_width=120,
 )
 
 @click.group(context_settings=CONTEXT_SETTINGS)

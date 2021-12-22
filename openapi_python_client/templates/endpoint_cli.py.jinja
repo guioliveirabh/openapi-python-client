@@ -1,111 +1,5 @@
-{% macro write_args_for_property(parameter, prefix, click_args, body) %}
-{% set name = prefix + parameter.name %}
-    {% if click_args %}
-{#@click.option('--{{ parameter.name }}', required=True, type={{ parameter.get_base_type_string() }})#}
-@click.option('--{{ name | replace('_', '-') }}' {{ ', required=True' if parameter.required else '' }}, type={{ parameter.get_base_json_type_string() }})
-    {% elif body %}
-    {{ parameter.name }} = {{ name }},
-    {% else %}
-    {{ name }},
-    {% endif %}
-{% endmacro %}
-
-{% macro write_args_for_nested_property(property, prefix, click_args, body) %}
-{% set is_list = property.template and 'list_property' in property.template %}
-{% set property = property.inner_property if is_list else property %}
-    {% for parameter in property.required_properties + property.optional_properties %}
-        {% if parameter.template and 'model_property' in parameter.template %}
-{{ write_args_for_nested_property(parameter, prefix + parameter.name + '_', click_args, body) }}
-        {% else %}
-{{ write_args_for_property(parameter, prefix, click_args, body) }}
-        {% endif %}
-    {% endfor %}
-{% endmacro %}
-
-
-{% macro write_all_args(endpoint, click_args, body) %}
-    {% if endpoint.json_body %}
-{{ write_args_for_nested_property(endpoint.json_body, '', click_args, body) }}
-    {% endif %}
-{% endmacro %}
-
-{% macro write_method(cli_method, endpoint) %}
-    """{{ endpoint.summary }}"""
-    {% if endpoint.header_parameters %}
-    # TODO: header_parameters
-    {% if endpoint.header_parameters.required %}
-    # TODO: required
-    {% endif %}
-    {% endif %}
-    {% if endpoint.cookie_parameters %}
-    # TODO: cookie_parameters
-    {% if endpoint.cookie_parameters.required %}
-    # TODO: required
-    {% endif %}
-    {% endif %}
-    {% if endpoint.query_parameters %}
-    # TODO: query_parameters
-    {% if endpoint.query_parameters.required %}
-    # TODO: required
-    {% endif %}
-    {% endif %}
-    {% if endpoint.json_body %}
-{% if endpoint.json_body.class_info is defined %}
-    {{ endpoint.json_body.name }} = {{ endpoint.json_body.class_info.name }}(
-    {{ write_all_args(endpoint, False, True) }}
-)
-{% else %}
-    # TODO: json_body
-    {% if endpoint.json_body.required %}
-    # TODO: required
-    {% endif %}
-    {% endif %}
-{% endif %}
-    {% if endpoint.multipart_body %}
-    # TODO: multipart_body
-    {% if endpoint.multipart_body.required %}
-    # TODO: required
-    {% endif %}
-    {% endif %}
-    {% if endpoint.form_body_class %}
-    # TODO: form_body_class
-    {% if endpoint.form_body_class.required %}
-    # TODO: required
-    {% endif %}
-    {% endif %}
-
-    response = {{ node.name }}_{{ cli_method }}(
-    {% for parameter in endpoint.path_parameters.values() %}
-    {{ parameter.name }} = {{ parameter.name }},
-    {% endfor %}
-    {% if endpoint.json_body and endpoint.json_body.class_info is defined %}
-    {{ endpoint.json_body.name }} = {{ endpoint.json_body.name }},
-    {% endif %}
-    client=api.{{ 'authenticated_client' if endpoint.requires_security else 'client' }},
-    )
-    api.handle_response(response)
-
-{% endmacro -%}
-from typing import Any, Dict, List, Optional, Union, cast
-{% for endpoint in node.endpoints.values() %}
-    {% for relative in endpoint.relative_imports %}
-{{ relative | replace("...", package_name + ".") }}
-    {% endfor %}
-{% endfor %}
-
-{% if node.is_root() %}
-from ..cli_main import cli
-{% else %}
-import click
-from {{ package_name }}.api_request import APIRequest, pass_api
-{% endif %}
-
-{% for name in node.keys() | sort %}
-from .{{ name }} import {{ name }}
-{% endfor %}
-
-{% for cli_method, endpoint in node.endpoints.items() %}
-from {{ package_name }}.api.{{ endpoint.tag }}.{{ endpoint.file_name }} import sync_detailed as {{ node.name }}_{{ cli_method }}
+{% for name in node.get_all_imports() %}
+{{ name }}
 {% endfor %}
 
 
@@ -116,24 +10,73 @@ def {{ node.name }}():
 {% endif %}
 
 
-{% for cli_method, endpoint in node.endpoints.items() %}
+{% for method, endpoint in node.get_endpoints() %}
 @{{ node.name }}.command()
-{% for parameter in endpoint.path_parameters.values() %}
-@click.argument('{{ parameter.name }}', type={{ parameter.get_base_type_string() }})
-{% endfor %}
-{{ write_all_args(endpoint, True, False) }}
+    {% for content in node.get_fw_arguments(endpoint) %}
+@click.argument({{ content }})
+    {% endfor %}
+    {% for content in node.get_fw_options(endpoint) %}
+@click.option({{ content }})
+    {% endfor %}
 @pass_api
-def {{ cli_method }}(
+def {{ method }}(
 api: APIRequest,
-{% for parameter in endpoint.path_parameters.values() %}
-{{ parameter.name }},
-{% endfor %}
-{{ write_all_args(endpoint, False, False) }}
+    {% for arg in node.get_function_arguments(endpoint) %}
+{{ arg }},
+    {% endfor %}
 ):
-{{ write_method(cli_method, endpoint) }}
+    """{{ endpoint.summary }}"""
 
+    {% if endpoint.header_parameters %}
+    # TODO: header_parameters
+    {% if endpoint.header_parameters.required %}
+    # TODO: required
+    {% endif %}
+    {% endif %}
+
+    {% if endpoint.cookie_parameters %}
+    # TODO: cookie_parameters
+    {% if endpoint.cookie_parameters.required %}
+    # TODO: required
+    {% endif %}
+    {% endif %}
+
+    {% if endpoint.query_parameters %}
+    # TODO: query_parameters
+    {% if endpoint.query_parameters.required %}
+    # TODO: required
+    {% endif %}
+    {% endif %}
+
+    {% if endpoint.multipart_body %}
+    # TODO: multipart_body
+    {% if endpoint.multipart_body.required %}
+    # TODO: required
+    {% endif %}
+    {% endif %}
+
+    {% if endpoint.form_body_class %}
+    # TODO: form_body_class
+    {% if endpoint.form_body_class.required %}
+    # TODO: required
+    {% endif %}
+    {% endif %}
+
+    {% for call in node.get_fw_cls_creation(endpoint) %}
+    {{ call | indent(4) }}
+    {% endfor %}
+
+    response = {{ node.name }}_{{ method }}(
+    {% for arg in node.get_api_call_arguments(endpoint) %}
+    {{ arg }} = {{ arg }},
+    {% endfor %}
+    client=api.{{ 'authenticated_client' if endpoint.requires_security else 'client' }},
+    )
+    api.handle_response(response)
 
 {% endfor %}
+
+
 {% for name in node.keys() | sort %}
 {% set node_name = 'cli' if node.is_root() else node.name %}
 {{ node_name }}.add_command({{ name }})

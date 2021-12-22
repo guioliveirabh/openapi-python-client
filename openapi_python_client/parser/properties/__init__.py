@@ -2,6 +2,7 @@ __all__ = [
     "AnyProperty",
     "Class",
     "EnumProperty",
+    "ListProperty",
     "ModelProperty",
     "Property",
     "Schemas",
