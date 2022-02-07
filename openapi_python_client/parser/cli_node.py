@@ -3,7 +3,7 @@ from queue import Queue
 from typing import Dict, Generator, Tuple, List
 
 from .openapi import Endpoint
-from .properties import Property, ListProperty, ModelProperty
+from .properties import Property, EnumProperty, ListProperty, ModelProperty
 
 CLICK_TYPE_MAP = {
     # 'str': 'click.STRING',
@@ -25,6 +25,10 @@ def get_click_type(type_str: str) -> str:
     except KeyError:
         print('TODO: Implement', type_str)
         return ''
+
+
+def get_click_choices_list(prop: EnumProperty) -> str:
+    return '[' + ', '.join(repr(value) for value in prop.values.values()) + ']'
 
 
 class Node(dict):
@@ -120,8 +124,18 @@ class Node(dict):
                 if level > 0:
                     yield prop, f"{name_prefix.rstrip(cls.NAME_SEPARATOR)}", is_list
 
-        if endpoint.json_body:  # TODO: other parameters/body
+        if endpoint.json_body:
             yield from _rec_fn(endpoint.json_body)
+        if endpoint.multipart_body:
+            yield from _rec_fn(endpoint.multipart_body)
+        for iterator in [endpoint.query_parameters.values(),
+                         endpoint.header_parameters.values(),
+                         endpoint.cookie_parameters.values()]:
+            for _sub_property in iterator:
+                yield from _rec_fn(prop=_sub_property,
+                                   name_prefix=f"{_sub_property.python_name.rstrip(cls.NAME_SEPARATOR)}"
+                                               f"{cls.NAME_SEPARATOR}",
+                                   level=1)
 
     @classmethod
     def get_fw_arguments(cls, endpoint: Endpoint) -> Generator[str, None, None]:
@@ -137,7 +151,9 @@ class Node(dict):
             content = f"'--{name.replace(cls.NAME_SEPARATOR, '-')}'"
             # if prop.required:
             #     content += ', required=True'  # TODO: depends on parent
-            if prop.get_base_type_string() == 'bool':
+            if isinstance(prop, EnumProperty):
+                content += f", type=click.Choice({get_click_choices_list(prop)})"
+            elif prop.get_base_type_string() == 'bool':
                 content += ', is_flag=True'
             else:
                 type_str = get_click_type(prop.get_base_type_string())
@@ -165,6 +181,15 @@ class Node(dict):
         if endpoint.json_body:
             yield endpoint.json_body.python_name
 
+        if endpoint.multipart_body:
+            yield endpoint.multipart_body.python_name
+
+        for iterator in [endpoint.query_parameters.values(),
+                         endpoint.header_parameters.values(),
+                         endpoint.cookie_parameters.values()]:
+            for _sub_property in iterator:
+                yield _sub_property.python_name
+
     @classmethod
     def get_fw_cls_creation(
             cls,
@@ -175,30 +200,41 @@ class Node(dict):
         queue = Queue()
         calls: List[str] = []
 
-        if endpoint.json_body:  # TODO: other parameters/body
-            queue.put(('', endpoint.json_body))
+        if endpoint.json_body:
+            queue.put(('', 0, endpoint.json_body))
+        if endpoint.multipart_body:
+            queue.put(('', 0, endpoint.multipart_body))
+        for iterator in [endpoint.query_parameters.values(),
+                         endpoint.header_parameters.values(),
+                         endpoint.cookie_parameters.values()]:
+            for _sub_property in iterator:
+                queue.put((f"{_sub_property.python_name.rstrip(cls.NAME_SEPARATOR)}{cls.NAME_SEPARATOR}",
+                           0,
+                           _sub_property))
 
         while not queue.empty():
-            name_prefix, prop = queue.get()
+            name_prefix, level, prop = queue.get()
             # queue.task_done()
             if isinstance(prop, ListProperty):
                 prop = prop.inner_property
+            variable_name = f"{name_prefix.rstrip(cls.NAME_SEPARATOR) if level > 0 else prop.python_name}"
+            if isinstance(prop, EnumProperty):
+                calls.append(f"{variable_name} = {prop.class_info.name}({variable_name})\n")
             if isinstance(prop, ModelProperty):
-                content = f"{name_prefix.rstrip(cls.NAME_SEPARATOR) if name_prefix else prop.python_name}" \
-                          f" = {prop.class_info.name}(\n"
+                content = f"{variable_name} = {prop.class_info.name}(\n"
                 for sub_property in prop.required_properties + prop.optional_properties:
                     include_ok = True
                     if isinstance(sub_property, ModelProperty):
                         if sub_property.required_properties + sub_property.optional_properties:
-                            queue.put((f"{name_prefix}{sub_property.python_name}{cls.NAME_SEPARATOR}", sub_property))
+                            queue.put((f"{name_prefix}{sub_property.python_name}{cls.NAME_SEPARATOR}",
+                                       level + 1,
+                                       sub_property))
                         else:
                             include_ok = False
                     if include_ok:
                         content += f"{sub_property.python_name} = {name_prefix}{sub_property.python_name},\n"
                 content += ')\n'
                 calls.append(content)
-            else:
-                raise RuntimeError("debug this")
 
         for call in reversed(calls):
             yield call

@@ -27,34 +27,6 @@ api: APIRequest,
 ):
     """{{ endpoint.summary }}"""
 
-    {% if endpoint.header_parameters %}
-    # TODO: header_parameters
-    {% if endpoint.header_parameters.required %}
-    # TODO: required
-    {% endif %}
-    {% endif %}
-
-    {% if endpoint.cookie_parameters %}
-    # TODO: cookie_parameters
-    {% if endpoint.cookie_parameters.required %}
-    # TODO: required
-    {% endif %}
-    {% endif %}
-
-    {% if endpoint.query_parameters %}
-    # TODO: query_parameters
-    {% if endpoint.query_parameters.required %}
-    # TODO: required
-    {% endif %}
-    {% endif %}
-
-    {% if endpoint.multipart_body %}
-    # TODO: multipart_body
-    {% if endpoint.multipart_body.required %}
-    # TODO: required
-    {% endif %}
-    {% endif %}
-
     {% if endpoint.form_body_class %}
     # TODO: form_body_class
     {% if endpoint.form_body_class.required %}
