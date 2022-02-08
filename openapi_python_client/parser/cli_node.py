@@ -101,13 +101,14 @@ class Node(dict):
     def _get_all_properties_with_context_name(
             cls,
             endpoint: Endpoint
-    ) -> Generator[Tuple[Property, str, bool], None, None]:
+    ) -> Generator[Tuple[Property, str, bool, bool], None, None]:
         # TODO: move to Endpoint?
         def _rec_fn(
                 prop: Property,
                 name_prefix: str = '',
                 level: int = 0,
-        ) -> Generator[Tuple[Property, str, bool], None, None]:
+                required: bool = False,
+        ) -> Generator[Tuple[Property, str, bool, bool], None, None]:
             is_list = False
             if isinstance(prop, ListProperty):
                 prop = prop.inner_property
@@ -119,23 +120,26 @@ class Node(dict):
                         sub_property,
                         f"{name_prefix}{sub_property.python_name}{cls.NAME_SEPARATOR}",
                         level + 1,
+                        required and sub_property.required
                     )
             else:
                 if level > 0:
-                    yield prop, f"{name_prefix.rstrip(cls.NAME_SEPARATOR)}", is_list
+                    yield prop, f"{name_prefix.rstrip(cls.NAME_SEPARATOR)}", is_list, required and prop.required
 
         if endpoint.json_body:
-            yield from _rec_fn(endpoint.json_body)
+            yield from _rec_fn(endpoint.json_body, required=endpoint.json_body.required)
         if endpoint.multipart_body:
-            yield from _rec_fn(endpoint.multipart_body)
+            yield from _rec_fn(endpoint.multipart_body, required=endpoint.multipart_body.required)
         for iterator in [endpoint.query_parameters.values(),
                          endpoint.header_parameters.values(),
                          endpoint.cookie_parameters.values()]:
             for _sub_property in iterator:
-                yield from _rec_fn(prop=_sub_property,
-                                   name_prefix=f"{_sub_property.python_name.rstrip(cls.NAME_SEPARATOR)}"
-                                               f"{cls.NAME_SEPARATOR}",
-                                   level=1)
+                yield from _rec_fn(
+                    prop=_sub_property,
+                    name_prefix=f"{_sub_property.python_name.rstrip(cls.NAME_SEPARATOR)}{cls.NAME_SEPARATOR}",
+                    level=1,
+                    required=_sub_property.required,
+                )
 
     @classmethod
     def get_fw_arguments(cls, endpoint: Endpoint) -> Generator[str, None, None]:
@@ -147,10 +151,10 @@ class Node(dict):
     @classmethod
     def get_fw_options(cls, endpoint: Endpoint) -> Generator[str, None, None]:
         # TODO: move to Endpoint?
-        for prop, name, is_list in cls._get_all_properties_with_context_name(endpoint):
+        for prop, name, is_list, required in cls._get_all_properties_with_context_name(endpoint):
             content = f"'--{name.replace(cls.NAME_SEPARATOR, '-')}'"
-            # if prop.required:
-            #     content += ', required=True'  # TODO: depends on parent
+            if required:
+                content += ', required=True'
             if isinstance(prop, EnumProperty):
                 content += f", type=click.Choice({get_click_choices_list(prop)})"
             elif prop.get_base_type_string() == 'bool':
@@ -169,7 +173,7 @@ class Node(dict):
         for prop in cls._get_all_properties_args(endpoint):
             yield prop.python_name
 
-        for _, name, _ in cls._get_all_properties_with_context_name(endpoint):
+        for _, name, _, _ in cls._get_all_properties_with_context_name(endpoint):
             yield name
 
     @classmethod
