@@ -323,6 +323,8 @@ class Project:  # pylint: disable=too-many-instance-attributes
         root = Node.get_root()
         for collection in endpoint_collections_by_tag.values():
             for endpoint in collection.endpoints:
+                # if not endpoint.path.startswith('/policies'):
+                #     continue
                 root.add_endpoint(endpoint)
 
         _create_files(node=root, base_path=self.package_dir)

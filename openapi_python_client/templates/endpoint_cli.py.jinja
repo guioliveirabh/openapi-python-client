@@ -27,13 +27,6 @@ api: APIRequest,
 ):
     """{{ endpoint.summary }}"""
 
-    {% if endpoint.form_body_class %}
-    # TODO: form_body_class
-    {% if endpoint.form_body_class.required %}
-    # TODO: required
-    {% endif %}
-    {% endif %}
-
     {% for call in node.get_fw_cls_creation(endpoint) %}
     {{ call | indent(4) }}
     {% endfor %}

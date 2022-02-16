@@ -1,4 +1,5 @@
 """ TODO """
+from dataclasses import dataclass
 from queue import Queue
 from typing import Dict, Generator, Tuple, List
 
@@ -17,6 +18,34 @@ CLICK_TYPE_MAP = {
     'Any': '',
     'datetime.datetime': 'click.DateTime()',
 }
+
+
+@dataclass
+class PropertyWithHierarchy:
+    prop: Property
+    name_prefix: str = ''
+    level: int = 0
+    required: bool = False
+
+    @property
+    def name(self) -> str:
+        if self.level == 0 and not self.name_prefix:
+            return ''
+        if self.name_prefix:
+            return f"{self.name_prefix}{Node.NAME_SEPARATOR}{self.prop.python_name.strip(Node.NAME_SEPARATOR)}"
+        return self.prop.python_name.strip(Node.NAME_SEPARATOR)
+
+    @property
+    def name_var(self) -> str:
+        if not self.name_prefix:
+            return self.prop.python_name
+        return f"{self.name_prefix}{Node.NAME_SEPARATOR}{self.prop.python_name.strip(Node.NAME_SEPARATOR)}"
+
+    def name_arg(self, sub_property: Property) -> str:
+        name = self.name
+        if name:
+            return f"{name}{Node.NAME_SEPARATOR}{sub_property.python_name.strip(Node.NAME_SEPARATOR)}"
+        return sub_property.python_name
 
 
 def get_click_type(type_str: str) -> str:
@@ -76,13 +105,28 @@ class Node(dict):
             yield method, endpoint
 
     def get_all_imports(self) -> Generator[str, None, None]:
+        def _get_imports_for_property(prop: Property) -> Generator[str, None, None]:
+            if isinstance(prop, ListProperty):
+                prop = prop.inner_property
+            if isinstance(prop, ModelProperty):
+                for _relative in prop.relative_imports:
+                    yield _relative.replace("..", f"{self.PACKAGE_NAME}.")
+
+                properties = prop.required_properties + prop.optional_properties
+                if isinstance(prop.additional_properties, Property):
+                    properties.append(prop.additional_properties)
+                for sub_property in properties:
+                    yield from _get_imports_for_property(sub_property)
+
         if self.is_root():
             yield f"from {self.PACKAGE_NAME}.cli_main import cli"
         else:
             yield 'from typing import Any, Dict, List, Optional, Union, cast'
+            yield 'import json'
             yield 'import click'
             yield f"from {self.PACKAGE_NAME}.api_request import APIRequest, pass_api"
-            yield f"from {self.PACKAGE_NAME}.models import *"  # TODO: improve
+            yield f"from {self.PACKAGE_NAME}.models import *"
+            yield f"from {self.PACKAGE_NAME}.types import UNSET"
         for name in self.keys():
             yield f"from .{name} import {name}"
         for method, endpoint in self.get_endpoints():
@@ -90,56 +134,21 @@ class Node(dict):
                   f" import sync_detailed as {self.name}_{method}"
             for relative in endpoint.relative_imports:
                 yield relative.replace("...", f"{self.PACKAGE_NAME}.")
+            if endpoint.json_body:
+                yield from _get_imports_for_property(endpoint.json_body)
+            if endpoint.multipart_body:
+                yield from _get_imports_for_property(endpoint.multipart_body)
+            for iterator in [endpoint.query_parameters.values(),
+                             endpoint.header_parameters.values(),
+                             endpoint.cookie_parameters.values()]:
+                for _sub_property in iterator:
+                    yield from _get_imports_for_property(prop=_sub_property)
 
     @classmethod
     def _get_all_properties_args(cls, endpoint: Endpoint) -> Generator[Property, None, None]:
         # TODO: move to Endpoint?
         for prop in endpoint.path_parameters.values():
             yield prop
-
-    @classmethod
-    def _get_all_properties_with_context_name(
-            cls,
-            endpoint: Endpoint
-    ) -> Generator[Tuple[Property, str, bool, bool], None, None]:
-        # TODO: move to Endpoint?
-        def _rec_fn(
-                prop: Property,
-                name_prefix: str = '',
-                level: int = 0,
-                required: bool = False,
-        ) -> Generator[Tuple[Property, str, bool, bool], None, None]:
-            is_list = False
-            if isinstance(prop, ListProperty):
-                prop = prop.inner_property
-                is_list = True
-            if isinstance(prop, ModelProperty):
-                # if level == 0:
-                for sub_property in prop.required_properties + prop.optional_properties:
-                    yield from _rec_fn(
-                        sub_property,
-                        f"{name_prefix}{sub_property.python_name}{cls.NAME_SEPARATOR}",
-                        level + 1,
-                        required and sub_property.required
-                    )
-            else:
-                if level > 0:
-                    yield prop, f"{name_prefix.rstrip(cls.NAME_SEPARATOR)}", is_list, required and prop.required
-
-        if endpoint.json_body:
-            yield from _rec_fn(endpoint.json_body, required=endpoint.json_body.required)
-        if endpoint.multipart_body:
-            yield from _rec_fn(endpoint.multipart_body, required=endpoint.multipart_body.required)
-        for iterator in [endpoint.query_parameters.values(),
-                         endpoint.header_parameters.values(),
-                         endpoint.cookie_parameters.values()]:
-            for _sub_property in iterator:
-                yield from _rec_fn(
-                    prop=_sub_property,
-                    name_prefix=f"{_sub_property.python_name.rstrip(cls.NAME_SEPARATOR)}{cls.NAME_SEPARATOR}",
-                    level=1,
-                    required=_sub_property.required,
-                )
 
     @classmethod
     def get_fw_arguments(cls, endpoint: Endpoint) -> Generator[str, None, None]:
@@ -151,10 +160,16 @@ class Node(dict):
     @classmethod
     def get_fw_options(cls, endpoint: Endpoint) -> Generator[str, None, None]:
         # TODO: move to Endpoint?
-        for prop, name, is_list, required in cls._get_all_properties_with_context_name(endpoint):
+        for prop_h in cls.get_all_props_for_endpoint(endpoint):
+            name = prop_h.name
+            required = prop_h.required
+            prop = prop_h.prop
+
             content = f"'--{name.replace(cls.NAME_SEPARATOR, '-')}'"
             if required:
                 content += ', required=True'
+            # if prop.default:
+            #     content += f", default={repr(prop.default)}"
             if isinstance(prop, EnumProperty):
                 content += f", type=click.Choice({get_click_choices_list(prop)})"
             elif prop.get_base_type_string() == 'bool':
@@ -163,8 +178,8 @@ class Node(dict):
                 type_str = get_click_type(prop.get_base_type_string())
                 if type_str:
                     content += f", type={type_str}"
-            if is_list:
-                content += ', multiple=True'
+            # if is_list:
+            #     content += ', multiple=True'
             yield content
 
     @classmethod
@@ -173,8 +188,8 @@ class Node(dict):
         for prop in cls._get_all_properties_args(endpoint):
             yield prop.python_name
 
-        for _, name, _, _ in cls._get_all_properties_with_context_name(endpoint):
-            yield name
+        for prop_h in cls.get_all_props_for_endpoint(endpoint):
+            yield prop_h.name
 
     @classmethod
     def get_api_call_arguments(cls, endpoint: Endpoint) -> Generator[str, None, None]:
@@ -195,50 +210,125 @@ class Node(dict):
                 yield _sub_property.python_name
 
     @classmethod
+    def get_property_queue(
+            cls,
+            endpoint: Endpoint
+    ) -> "Queue[PropertyWithHierarchy]":
+        queue: "Queue[PropertyWithHierarchy]" = Queue()
+        if endpoint.json_body:
+            queue.put(PropertyWithHierarchy(endpoint.json_body, required=endpoint.json_body.required))
+        if endpoint.multipart_body:
+            queue.put(PropertyWithHierarchy(endpoint.multipart_body, required=endpoint.multipart_body.required))
+        for iterator in [endpoint.query_parameters.values(),
+                         endpoint.header_parameters.values(),
+                         endpoint.cookie_parameters.values()]:
+            for _sub_property in iterator:
+                queue.put(PropertyWithHierarchy(_sub_property, level=1, required=_sub_property.required))
+        return queue
+
+    @classmethod
+    def get_all_props_for_endpoint(
+            cls,
+            endpoint: Endpoint
+    ) -> Generator[PropertyWithHierarchy, None, None]:
+        queue = cls.get_property_queue(endpoint)
+        while not queue.empty():
+            prop_h = queue.get()
+            prop = prop_h.prop
+
+            if isinstance(prop, ListProperty):
+                prop = prop.inner_property
+                prop_h.prop = prop
+                prop_h.level += 1
+            if isinstance(prop, ModelProperty):
+                if isinstance(prop.additional_properties, Property):
+                    queue.put(PropertyWithHierarchy(
+                        prop=prop.additional_properties,
+                        level=prop_h.level + 1,
+                        name_prefix=prop_h.name,
+                        required=prop_h.required and prop.additional_properties.required,
+                    ))
+                elif prop.additional_properties \
+                        and prop_h.level > 0 \
+                        and len(prop.required_properties) == 0 \
+                        and len(prop.optional_properties) == 0:
+                    yield prop_h
+
+                for sub_property in prop.required_properties + prop.optional_properties:
+                    queue.put(PropertyWithHierarchy(
+                        prop=sub_property,
+                        level=prop_h.level + 1,
+                        name_prefix=prop_h.name,
+                        required=prop_h.required and sub_property.required
+                    ))
+            elif prop_h.name:
+                yield prop_h
+
+    @classmethod
     def get_fw_cls_creation(
             cls,
             endpoint: Endpoint
     ) -> Generator[str, None, None]:
         # TODO: move to Endpoint?
 
-        queue = Queue()
+        queue = cls.get_property_queue(endpoint)
         calls: List[str] = []
 
-        if endpoint.json_body:
-            queue.put(('', 0, endpoint.json_body))
-        if endpoint.multipart_body:
-            queue.put(('', 0, endpoint.multipart_body))
-        for iterator in [endpoint.query_parameters.values(),
-                         endpoint.header_parameters.values(),
-                         endpoint.cookie_parameters.values()]:
-            for _sub_property in iterator:
-                queue.put((f"{_sub_property.python_name.rstrip(cls.NAME_SEPARATOR)}{cls.NAME_SEPARATOR}",
-                           0,
-                           _sub_property))
-
         while not queue.empty():
-            name_prefix, level, prop = queue.get()
+            prop_h = queue.get()
+            prop = prop_h.prop
             # queue.task_done()
             if isinstance(prop, ListProperty):
+                name = prop_h.name_var
                 prop = prop.inner_property
-            variable_name = f"{name_prefix.rstrip(cls.NAME_SEPARATOR) if level > 0 else prop.python_name}"
-            if isinstance(prop, EnumProperty):
-                calls.append(f"{variable_name} = {prop.class_info.name}({variable_name})\n")
-            if isinstance(prop, ModelProperty):
-                content = f"{variable_name} = {prop.class_info.name}(\n"
-                for sub_property in prop.required_properties + prop.optional_properties:
-                    include_ok = True
-                    if isinstance(sub_property, ModelProperty):
-                        if sub_property.required_properties + sub_property.optional_properties:
-                            queue.put((f"{name_prefix}{sub_property.python_name}{cls.NAME_SEPARATOR}",
-                                       level + 1,
-                                       sub_property))
-                        else:
-                            include_ok = False
-                    if include_ok:
-                        content += f"{sub_property.python_name} = {name_prefix}{sub_property.python_name},\n"
-                content += ')\n'
+                prop_h.prop = prop
+                prop_h.level += 1
+                content = f"{name} = []\n" \
+                          f"if {prop_h.name} is not None:\n" \
+                          f"    {name}.append({prop_h.name})\n"
                 calls.append(content)
+
+            if isinstance(prop, EnumProperty):
+                calls.append(f"{prop_h.name} = {prop.class_info.name}({prop_h.name})\n")
+            elif isinstance(prop, ModelProperty):
+                if isinstance(prop.additional_properties, Property):
+                    content = f"{prop_h.name_var} = {prop.class_info.name}()\n" \
+                              f"{prop_h.name_var}.additional_properties = " \
+                              f"{{'{prop.python_name}': {prop_h.name_arg(prop.additional_properties)}}}\n"
+                    calls.append(content)
+                    queue.put(PropertyWithHierarchy(
+                        prop=prop.additional_properties,
+                        level=prop_h.level + 1,
+                        name_prefix=prop_h.name,
+                        required=prop_h.required and prop.additional_properties.required
+                    ))
+                elif prop.additional_properties \
+                        and prop_h.level > 0 \
+                        and len(prop.required_properties) == 0 \
+                        and len(prop.optional_properties) == 0:
+                    content = f"if {prop_h.name_var} is None:\n" \
+                              f"    {prop_h.name_var} = UNSET\n" \
+                              f"else:\n" \
+                              f"    _tmp = {prop.class_info.name}()\n" \
+                              f"    _tmp.additional_properties = " \
+                              f"json.loads({prop_h.name_var}) # TODO: check if dict\n" \
+                              f"    {prop_h.name_var} = _tmp\n"
+                    calls.append(content)
+
+                for sub_property in prop.required_properties + prop.optional_properties:
+                    queue.put(PropertyWithHierarchy(
+                        prop=sub_property,
+                        level=prop_h.level + 1,
+                        name_prefix=prop_h.name,
+                        required=prop_h.required and sub_property.required
+                    ))
+
+                if len(prop.required_properties) > 0 or len(prop.optional_properties) > 0:
+                    content = f"{prop_h.name_var} = {prop.class_info.name}(\n"
+                    for sub_property in prop.required_properties + prop.optional_properties:
+                        content += f"{sub_property.python_name} = {prop_h.name_arg(sub_property)},\n"
+                    content += ')\n'
+                    calls.append(content)
 
         for call in reversed(calls):
             yield call
