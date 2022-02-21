@@ -168,8 +168,8 @@ class Node(dict):
             content = f"'--{name.replace(cls.NAME_SEPARATOR, '-')}'"
             if required:
                 content += ', required=True'
-            # if prop.default:
-            #     content += f", default={repr(prop.default)}"
+            if prop.default:
+                content += f", default={prop.default}"
             if isinstance(prop, EnumProperty):
                 content += f", type=click.Choice({get_click_choices_list(prop)})"
             elif prop.get_base_type_string() == 'bool':
@@ -178,6 +178,9 @@ class Node(dict):
                 type_str = get_click_type(prop.get_base_type_string())
                 if type_str:
                     content += f", type={type_str}"
+            if prop.description:
+                option_help = prop.description.strip().replace('\n', ' ')
+                content += f", help='{option_help}'"
             # if is_list:
             #     content += ', multiple=True'
             yield content
