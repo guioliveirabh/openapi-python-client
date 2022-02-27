@@ -69,6 +69,8 @@ class APIRequest:
                     )
                 elif self.data_format == self.YAML_FORMAT:
                     data = yaml.dump(data, indent=self.INDENT_COUNT)
+        if response.status_code == 204:
+            data = f"Success - HTTP204"
 
         if self.output_file:
             self.output_file.write_text(data)

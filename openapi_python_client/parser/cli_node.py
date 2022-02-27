@@ -292,7 +292,9 @@ class Node(dict):
                 calls.append(content)
 
             if isinstance(prop, EnumProperty):
-                calls.append(f"{prop_h.name} = {prop.class_info.name}({prop_h.name})\n")
+                content = f"if {prop_h.name} is not None:\n" \
+                          f"    {prop_h.name} = {prop.class_info.name}({prop_h.name})\n"
+                calls.append(content)
             elif isinstance(prop, ModelProperty):
                 if isinstance(prop.additional_properties, Property):
                     content = f"{prop_h.name_var} = {prop.class_info.name}()\n" \
