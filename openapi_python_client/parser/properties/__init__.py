@@ -286,6 +286,7 @@ def _string_based_property(
             python_name=python_name,
             description=data.description,
             example=data.example,
+            read_only=data.readOnly,
         )
     if string_format == "date":
         return DateProperty(
@@ -296,6 +297,7 @@ def _string_based_property(
             python_name=python_name,
             description=data.description,
             example=data.example,
+            read_only=data.readOnly,
         )
     if string_format == "binary":
         return FileProperty(
@@ -306,6 +308,7 @@ def _string_based_property(
             python_name=python_name,
             description=data.description,
             example=data.example,
+            read_only=data.readOnly,
         )
     return StringProperty(
         name=name,
@@ -316,6 +319,7 @@ def _string_based_property(
         python_name=python_name,
         description=data.description,
         example=data.example,
+        read_only=data.readOnly,
     )
 
 
@@ -371,6 +375,7 @@ def build_enum_property(
                 python_name=utils.PythonIdentifier(value=name, prefix=config.field_prefix),
                 description=None,
                 example=None,
+                read_only=data.readOnly,
             ),
             schemas,
         )
@@ -399,6 +404,7 @@ def build_enum_property(
         python_name=utils.PythonIdentifier(value=name, prefix=config.field_prefix),
         description=data.description,
         example=data.example,
+        read_only=data.readOnly,
     )
 
     default = get_enum_default(prop, data)
@@ -479,6 +485,7 @@ def build_union_property(
             python_name=utils.PythonIdentifier(value=name, prefix=config.field_prefix),
             description=data.description,
             example=data.example,
+            read_only=data.readOnly,
         ),
         schemas,
     )
@@ -520,6 +527,7 @@ def build_list_property(
             python_name=utils.PythonIdentifier(value=name, prefix=config.field_prefix),
             description=data.description,
             example=data.example,
+            read_only=data.readOnly,
         ),
         schemas,
     )
@@ -641,6 +649,7 @@ def _property_from_data(
                 python_name=utils.PythonIdentifier(value=name, prefix=config.field_prefix),
                 description=data.description,
                 example=data.example,
+                read_only=data.readOnly,
             ),
             schemas,
         )
@@ -654,6 +663,7 @@ def _property_from_data(
                 python_name=utils.PythonIdentifier(value=name, prefix=config.field_prefix),
                 description=data.description,
                 example=data.example,
+                read_only=data.readOnly,
             ),
             schemas,
         )
@@ -667,6 +677,7 @@ def _property_from_data(
                 python_name=utils.PythonIdentifier(value=name, prefix=config.field_prefix),
                 description=data.description,
                 example=data.example,
+                read_only=data.readOnly,
             ),
             schemas,
         )
@@ -687,6 +698,7 @@ def _property_from_data(
             python_name=utils.PythonIdentifier(value=name, prefix=config.field_prefix),
             description=data.description,
             example=data.example,
+            read_only=data.readOnly,
         ),
         schemas,
     )

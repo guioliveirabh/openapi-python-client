@@ -43,6 +43,7 @@ def empty_response(*, status_code: StatusCode, response_name: str, config: Confi
             python_name=PythonIdentifier(value=response_name, prefix=config.field_prefix),
             description=description,
             example=None,
+            read_only=False,
         ),
         source="None",
     )

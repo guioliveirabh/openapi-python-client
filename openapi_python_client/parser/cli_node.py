@@ -1,10 +1,10 @@
 """ TODO """
 from dataclasses import dataclass
 from queue import Queue
-from typing import Dict, Generator, Tuple, List
+from typing import Dict, Generator, List, Tuple
 
 from .openapi import Endpoint
-from .properties import Property, EnumProperty, ListProperty, ModelProperty
+from .properties import EnumProperty, ListProperty, ModelProperty, Property
 
 CLICK_TYPE_MAP = {
     # 'str': 'click.STRING',
@@ -26,6 +26,7 @@ class PropertyWithHierarchy:
     name_prefix: str = ''
     level: int = 0
     required: bool = False
+    read_only: bool = False
 
     @property
     def name(self) -> str:
@@ -148,6 +149,8 @@ class Node(dict):
     def _get_all_properties_args(cls, endpoint: Endpoint) -> Generator[Property, None, None]:
         # TODO: move to Endpoint?
         for prop in endpoint.path_parameters.values():
+            if prop.read_only:
+                continue
             yield prop
 
     @classmethod
@@ -164,6 +167,9 @@ class Node(dict):
             name = prop_h.name
             required = prop_h.required
             prop = prop_h.prop
+            #
+            # if prop.read_only or prop_h.read_only:
+            #     continue
 
             content = f"'--{name.replace(cls.NAME_SEPARATOR, '-')}'"
             if required:
@@ -198,18 +204,22 @@ class Node(dict):
     def get_api_call_arguments(cls, endpoint: Endpoint) -> Generator[str, None, None]:
         # TODO: move to Endpoint?
         for prop in cls._get_all_properties_args(endpoint):
+            if prop.read_only:
+                continue
             yield prop.python_name
 
-        if endpoint.json_body:
+        if endpoint.json_body and not endpoint.json_body.read_only:
             yield endpoint.json_body.python_name
 
-        if endpoint.multipart_body:
+        if endpoint.multipart_body and not endpoint.multipart_body.read_only:
             yield endpoint.multipart_body.python_name
 
         for iterator in [endpoint.query_parameters.values(),
                          endpoint.header_parameters.values(),
                          endpoint.cookie_parameters.values()]:
             for _sub_property in iterator:
+                if _sub_property.read_only:
+                    continue
                 yield _sub_property.python_name
 
     @classmethod
@@ -219,14 +229,17 @@ class Node(dict):
     ) -> "Queue[PropertyWithHierarchy]":
         queue: "Queue[PropertyWithHierarchy]" = Queue()
         if endpoint.json_body:
-            queue.put(PropertyWithHierarchy(endpoint.json_body, required=endpoint.json_body.required))
+            queue.put(PropertyWithHierarchy(endpoint.json_body, required=endpoint.json_body.required,
+                                            read_only=endpoint.json_body.read_only))
         if endpoint.multipart_body:
-            queue.put(PropertyWithHierarchy(endpoint.multipart_body, required=endpoint.multipart_body.required))
+            queue.put(PropertyWithHierarchy(endpoint.multipart_body, required=endpoint.multipart_body.required,
+                                            read_only=endpoint.multipart_body.read_only))
         for iterator in [endpoint.query_parameters.values(),
                          endpoint.header_parameters.values(),
                          endpoint.cookie_parameters.values()]:
             for _sub_property in iterator:
-                queue.put(PropertyWithHierarchy(_sub_property, level=1, required=_sub_property.required))
+                queue.put(PropertyWithHierarchy(_sub_property, level=1, required=_sub_property.required,
+                                                read_only=_sub_property.read_only))
         return queue
 
     @classmethod
@@ -238,6 +251,8 @@ class Node(dict):
         while not queue.empty():
             prop_h = queue.get()
             prop = prop_h.prop
+            if prop.read_only or prop_h.read_only:
+                continue
 
             if isinstance(prop, ListProperty):
                 prop = prop.inner_property
@@ -250,6 +265,7 @@ class Node(dict):
                         level=prop_h.level + 1,
                         name_prefix=prop_h.name,
                         required=prop_h.required and prop.additional_properties.required,
+                        read_only=prop_h.read_only or prop.additional_properties.read_only,
                     ))
                 elif prop.additional_properties \
                         and prop_h.level > 0 \
@@ -262,7 +278,8 @@ class Node(dict):
                         prop=sub_property,
                         level=prop_h.level + 1,
                         name_prefix=prop_h.name,
-                        required=prop_h.required and sub_property.required
+                        required=prop_h.required and sub_property.required,
+                        read_only=prop_h.read_only or sub_property.read_only,
                     ))
             elif prop_h.name:
                 yield prop_h
@@ -280,7 +297,9 @@ class Node(dict):
         while not queue.empty():
             prop_h = queue.get()
             prop = prop_h.prop
-            # queue.task_done()
+            if prop.read_only or prop_h.read_only:
+                continue
+
             if isinstance(prop, ListProperty):
                 name = prop_h.name_var
                 prop = prop.inner_property
@@ -305,7 +324,8 @@ class Node(dict):
                         prop=prop.additional_properties,
                         level=prop_h.level + 1,
                         name_prefix=prop_h.name,
-                        required=prop_h.required and prop.additional_properties.required
+                        required=prop_h.required and prop.additional_properties.required,
+                        read_only=prop_h.read_only or prop.additional_properties.read_only,
                     ))
                 elif prop.additional_properties \
                         and prop_h.level > 0 \
@@ -325,12 +345,15 @@ class Node(dict):
                         prop=sub_property,
                         level=prop_h.level + 1,
                         name_prefix=prop_h.name,
-                        required=prop_h.required and sub_property.required
+                        required=prop_h.required and sub_property.required,
+                        read_only=prop_h.read_only or sub_property.read_only,
                     ))
 
                 if len(prop.required_properties) > 0 or len(prop.optional_properties) > 0:
                     content = f"{prop_h.name_var} = {prop.class_info.name}(\n"
                     for sub_property in prop.required_properties + prop.optional_properties:
+                        if sub_property.read_only:
+                            continue
                         content += f"{sub_property.python_name} = {prop_h.name_arg(sub_property)},\n"
                     content += ')\n'
                     calls.append(content)

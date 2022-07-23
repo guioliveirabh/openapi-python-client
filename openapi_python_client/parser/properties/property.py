@@ -39,6 +39,7 @@ class Property:
     python_name: PythonIdentifier
     description: Optional[str] = attr.ib()
     example: Optional[str] = attr.ib()
+    read_only: Optional[bool] = attr.ib()
 
     template: ClassVar[str] = "any_property.py.jinja"
     json_is_dict: ClassVar[bool] = False
