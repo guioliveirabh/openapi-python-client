@@ -558,6 +558,39 @@ def _property_from_ref(
     return prop, schemas
 
 
+def _merge_oai_schema(first: oai.Schema, second: oai.Schema) -> oai.Schema:
+    # TODO: check conflicts?!
+
+    merged = oai.Schema()
+
+    fields = set(merged.__fields__.keys()) - {'allOf', 'anyOf', 'oneOf'}
+    for key in fields:
+        first_value = getattr(first, key)
+        second_value = getattr(second, key)
+
+        value = second_value if second_value else first_value
+        if key != 'type' and first_value and second_value:
+            if key == 'properties':
+                value = {**first_value, **second_value}
+            else:
+                print(f'WARNING: ignoring first value ({key}):\n  {first_value}\n  {second_value}\n')
+
+        if value:
+            setattr(merged, key, value)
+
+    merged.allOf = first.allOf + second.allOf
+    merged.anyOf = first.anyOf + second.anyOf
+    merged.oneOf = first.oneOf + second.oneOf
+
+    while merged.allOf:
+        sub_all_of_list = merged.allOf
+        merged.allOf = []
+        for sub_all_of in sub_all_of_list:
+            merged = _merge_oai_schema(merged, sub_all_of)
+
+    return merged
+
+
 # pylint: disable=too-many-arguments,too-many-return-statements
 def _property_from_data(
     name: str,
@@ -571,6 +604,9 @@ def _property_from_data(
     name = utils.remove_string_escapes(name)
     if isinstance(data, oai.Reference):
         return _property_from_ref(name=name, required=required, parent=None, data=data, schemas=schemas, config=config)
+
+    if data.allOf:
+        data = _merge_oai_schema(oai.Schema(), data)
 
     sub_data: List[Union[oai.Schema, oai.Reference]] = data.allOf + data.anyOf + data.oneOf
     # A union of a single reference should just be passed through to that reference (don't create copy class)
@@ -638,7 +674,7 @@ def _property_from_data(
         return build_list_property(
             data=data, name=name, required=required, schemas=schemas, parent_name=parent_name, config=config
         )
-    if data.type == oai.DataType.OBJECT or data.allOf:
+    if data.type == oai.DataType.OBJECT:
         return build_model_property(
             data=data, name=name, schemas=schemas, required=required, parent_name=parent_name, config=config
         )
